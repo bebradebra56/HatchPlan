@@ -6,6 +6,9 @@ import android.view.WindowManager
 import com.appsflyer.AppsFlyerConversionListener
 import com.appsflyer.AppsFlyerLib
 import com.appsflyer.attribution.AppsFlyerRequestListener
+import com.appsflyer.deeplink.DeepLink
+import com.appsflyer.deeplink.DeepLinkListener
+import com.appsflyer.deeplink.DeepLinkResult
 import com.hatchi.planing.soft.erjpg.presentation.di.hatchPlanModule
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -32,6 +35,7 @@ sealed interface HatchPlanAppsFlyerState {
     data object HatchPlanDefault : HatchPlanAppsFlyerState
     data class HatchPlanSuccess(val hatchPlanData: MutableMap<String, Any>?) :
         HatchPlanAppsFlyerState
+
     data object HatchPlanError : HatchPlanAppsFlyerState
 }
 
@@ -43,11 +47,14 @@ interface HatchPlanAppsApi {
         @Query("device_id") deviceId: String,
     ): Call<MutableMap<String, Any>?>
 }
+
 private const val HATCH_PLAN_APP_DEV = "4NXq7nHuvqfrN6XPYtU84Z"
 private const val HATCH_PLAN_LIN = "com.hatchi.planing.soft"
+
 class HatchPlanApplication : Application() {
     private var hatchPlanIsResumed = false
     private var hatchPlanConversionTimeoutJob: Job? = null
+    private var hatchPlanDeepLinkData: MutableMap<String, Any>? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -55,6 +62,27 @@ class HatchPlanApplication : Application() {
         val appsflyer = AppsFlyerLib.getInstance()
         hatchPlanSetDebufLogger(appsflyer)
         hatchPlanMinTimeBetween(appsflyer)
+
+        AppsFlyerLib.getInstance().subscribeForDeepLink(object : DeepLinkListener {
+            override fun onDeepLinking(p0: DeepLinkResult) {
+                when (p0.status) {
+                    DeepLinkResult.Status.FOUND -> {
+                        hatchPlanExtractDeepMap(p0.deepLink)
+                        Log.d(HATCH_PLAN_MAIN_TAG, "onDeepLinking found: ${p0.deepLink}")
+
+                    }
+
+                    DeepLinkResult.Status.NOT_FOUND -> {
+                        Log.d(HATCH_PLAN_MAIN_TAG, "onDeepLinking not found: ${p0.deepLink}")
+                    }
+
+                    DeepLinkResult.Status.ERROR -> {
+                        Log.d(HATCH_PLAN_MAIN_TAG, "onDeepLinking error: ${p0.error}")
+                    }
+                }
+            }
+
+        })
 
 
         appsflyer.init(
@@ -136,6 +164,33 @@ class HatchPlanApplication : Application() {
         }
     }
 
+    private fun hatchPlanExtractDeepMap(dl: DeepLink) {
+        val map = mutableMapOf<String, Any>()
+        dl.deepLinkValue?.let { map["deep_link_value"] = it }
+        dl.mediaSource?.let { map["media_source"] = it }
+        dl.campaign?.let { map["campaign"] = it }
+        dl.campaignId?.let { map["campaign_id"] = it }
+        dl.afSub1?.let { map["af_sub1"] = it }
+        dl.afSub2?.let { map["af_sub2"] = it }
+        dl.afSub3?.let { map["af_sub3"] = it }
+        dl.afSub4?.let { map["af_sub4"] = it }
+        dl.afSub5?.let { map["af_sub5"] = it }
+        dl.matchType?.let { map["match_type"] = it }
+        dl.clickHttpReferrer?.let { map["click_http_referrer"] = it }
+        dl.getStringValue("timestamp")?.let { map["timestamp"] = it }
+        dl.isDeferred?.let { map["is_deferred"] = it }
+        for (i in 1..10) {
+            val key = "deep_link_sub$i"
+            dl.getStringValue(key)?.let {
+                if (!map.containsKey(key)) {
+                    map[key] = it
+                }
+            }
+        }
+        Log.d(HATCH_PLAN_MAIN_TAG, "Extracted DeepLink data: $map")
+        hatchPlanDeepLinkData = map
+    }
+
     private fun hatchPlanStartConversionTimeout() {
         hatchPlanConversionTimeoutJob = CoroutineScope(Dispatchers.Main).launch {
             delay(30000)
@@ -148,9 +203,26 @@ class HatchPlanApplication : Application() {
 
     private fun hatchPlanResume(state: HatchPlanAppsFlyerState) {
         hatchPlanConversionTimeoutJob?.cancel()
-        if (!hatchPlanIsResumed) {
-            hatchPlanIsResumed = true
-            hatchPlanConversionFlow.value = state
+        if (state is HatchPlanAppsFlyerState.HatchPlanSuccess) {
+            val convData = state.hatchPlanData ?: mutableMapOf()
+            val deepData = hatchPlanDeepLinkData ?: mutableMapOf()
+            val merged = mutableMapOf<String, Any>().apply {
+                putAll(convData)
+                for ((key, value) in deepData) {
+                    if (!containsKey(key)) {
+                        put(key, value)
+                    }
+                }
+            }
+            if (!hatchPlanIsResumed) {
+                hatchPlanIsResumed = true
+                hatchPlanConversionFlow.value = HatchPlanAppsFlyerState.HatchPlanSuccess(merged)
+            }
+        } else {
+            if (!hatchPlanIsResumed) {
+                hatchPlanIsResumed = true
+                hatchPlanConversionFlow.value = state
+            }
         }
     }
 
@@ -168,7 +240,7 @@ class HatchPlanApplication : Application() {
         appsflyer.setMinTimeBetweenSessions(0)
     }
 
-    private fun hatchPlanGetApi(url: String, client: OkHttpClient?) : HatchPlanAppsApi {
+    private fun hatchPlanGetApi(url: String, client: OkHttpClient?): HatchPlanAppsApi {
         val retrofit = Retrofit.Builder()
             .baseUrl(url)
             .client(client ?: OkHttpClient.Builder().build())
