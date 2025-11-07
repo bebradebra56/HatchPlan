@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<navigation xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/hatch_plan_graph"
+    app:startDestination="@id/hatchPlanLoadFragment">
+
+    <fragment
+        android:id="@+id/hatchPlanLoadFragment"
+        android:name="com.hatchi.planing.soft.erjpg.presentation.ui.load.HatchPlanLoadFragment"
+        android:label="HatchPlanLoadFragment" >
+        <action
+            android:id="@+id/action_hatchPlanLoadFragment_to_hatchPlanV"
+            app:destination="@id/hatchPlanV"
+            app:popUpTo="@id/hatch_plan_graph"
+            app:popUpToInclusive="true" />
+    </fragment>
+    <fragment
+        android:id="@+id/hatchPlanV"
+        android:name="com.hatchi.planing.soft.erjpg.presentation.ui.view.HatchPlanV"
+        android:label="HatchPlanV" />
+</navigation>
